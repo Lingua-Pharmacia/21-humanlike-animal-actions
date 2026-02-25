@@ -5,14 +5,14 @@ const splash = document.getElementById('splash-screen'), instr = document.getEle
       gameZone = document.getElementById('game-zone'), gameBoard = document.getElementById('game-board'),
       feedbackArea = document.getElementById('quiz-feedback-area'), ptsVal = document.getElementById('points-val');
 
-// PERSISTENCE (Specific to Animal Society App)
+// PERSISTENCE
 let lifetimeScore = parseInt(localStorage.getItem('animalSocietyScore')) || 0;
 let completedLessons = JSON.parse(localStorage.getItem('completedAnimalLessons')) || [];
 if(ptsVal) ptsVal.innerText = lifetimeScore;
 
 let wordBucket = []; let currentQ = 0; let attempts = 0; let totalScore = 0; let firstCard = null;
 
-// STATIONS (Filenames match Screenshot 15.11.59 exactly)
+// STATIONS (Exact filenames from your root directory)
 const stations = [
     {file:"01_AggressiveMonkeys.mp3", title:"Aggressive Monkeys"},
     {file:"02_AntSacrifice.mp3", title:"Ant Sacrifice"},
@@ -42,11 +42,9 @@ stations.forEach((s, i) => {
     if(completedLessons.includes(s.file)) btn.classList.add('completed');
     btn.innerHTML = `<b>${i + 1}</b> ${s.title}`;
     btn.onclick = () => { 
-        grid.classList.add('hidden'); 
-        playerZone.classList.remove('hidden'); 
+        grid.classList.add('hidden'); playerZone.classList.remove('hidden'); 
         document.getElementById('now-playing-title').innerText = s.title; 
-        audio.src = s.file; // Pointing directly to root files
-        wordBucket = []; 
+        audio.src = s.file; wordBucket = []; 
     };
     grid.appendChild(btn);
 });
@@ -56,7 +54,7 @@ document.getElementById('btn-start').onclick = () => { splash.classList.add('hid
 document.getElementById('btn-enter').onclick = () => { instr.classList.add('hidden'); app.classList.remove('hidden'); };
 document.getElementById('btn-back').onclick = () => { location.reload(); };
 
-// BOWLING QUIZ LOGIC (Hard-Lock Logic)
+// BOWLING QUIZ
 document.getElementById('btn-bowling').onclick = () => {
     const fn = audio.src.split('/').pop(); const lesson = lessonData[fn][0];
     transcript.classList.add('hidden'); gameZone.classList.remove('hidden'); gameBoard.style.display = "none";
@@ -67,29 +65,47 @@ document.getElementById('btn-bowling').onclick = () => {
 function runQuiz(lesson) {
     if (currentQ >= 7) { finishQuiz(); return; }
     const qData = lesson.questions[currentQ];
+    const storyNum = parseInt(audio.src.split('/').pop().substring(0,2));
+    
     feedbackArea.innerHTML = `
         <div id="quiz-container">
             <div class="score-badge">SCORE: ${totalScore} | Q: ${currentQ+1}/7</div>
             <button id="btn-hear-q" class="mode-btn neon-green">👂 LISTEN TO QUESTION</button>
             <div id="mic-box" class="hidden" style="margin-top:20px;">
                 <button id="btn-speak" class="mic-btn">🎤</button>
-                <p id="mic-status" style="color:#666; font-weight:bold; margin-top:10px;">Ready...</p>
+                <p id="mic-status" style="color:#666; font-weight:bold;">Ready...</p>
             </div>
             <div id="res-area"></div>
         </div>`;
 
     document.getElementById('btn-hear-q').onclick = () => {
         const utter = new SpeechSynthesisUtterance(qData.q);
+        const voices = window.speechSynthesis.getVoices();
+        // Odd Story = Male voice preference, Even = Female
+        if (voices.length > 0) {
+            if (storyNum % 2 !== 0) {
+                utter.voice = voices.find(v => v.name.includes("Male") || v.name.includes("David")) || voices[0];
+            } else {
+                utter.voice = voices.find(v => v.name.includes("Female") || v.name.includes("Zira") || v.name.includes("Google US English")) || voices[0];
+            }
+        }
         utter.onend = () => { document.getElementById('mic-box').classList.remove('hidden'); };
         window.speechSynthesis.speak(utter);
     };
 
     document.getElementById('btn-speak').onclick = function() {
         const btn = this; const status = document.getElementById('mic-status');
-        btn.classList.add('active'); status.innerText = "Listening...";
-        const rec = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
-        rec.lang = 'en-US'; rec.interimResults = false;
-        rec.onresult = (e) => {
+        
+        // KILL ANY EXISTING RECOGNITION TO PREVENT STALLING
+        if (window.currentRec) { window.currentRec.abort(); }
+        
+        window.currentRec = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
+        window.currentRec.lang = 'en-US';
+        window.currentRec.interimResults = false;
+
+        window.currentRec.onstart = () => { btn.classList.add('active'); status.innerText = "Listening..."; };
+
+        window.currentRec.onresult = (e) => {
             document.getElementById('mic-box').classList.add('hidden'); 
             const res = e.results[0][0].transcript.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
             const ans = qData.a_en.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
@@ -102,14 +118,15 @@ function runQuiz(lesson) {
                 else { showResult(false, "MISS! (0 pts)", qData, lesson, false); }
             }
         };
-        rec.onerror = () => { btn.classList.remove('active'); status.innerText = "Error. Tap Mic again."; };
-        rec.start();
+
+        window.currentRec.onerror = () => { btn.classList.remove('active'); status.innerText = "Error. Try again."; };
+        window.currentRec.start();
     };
 }
 
 function showResult(isCorrect, msg, qData, lesson, canRetry = false) {
     const area = document.getElementById('res-area');
-    area.innerHTML = `<h1 style="color:${isCorrect?'#39ff14':'#f44'}; font-size: 50px; margin-bottom:10px;">${msg}</h1>`;
+    area.innerHTML = `<h1 style="color:${isCorrect?'#39ff14':'#f44'}; font-size: 50px;">${msg}</h1>`;
     if (isCorrect || !canRetry) {
         area.innerHTML += `
             <p class="quiz-q-text">Q: ${qData.q}</p>
@@ -136,33 +153,30 @@ function finishQuiz() {
     feedbackArea.innerHTML = `<h1 style="color:#ccff00; font-size: 60px;">FINISHED!</h1><h2 style="font-size: 40px;">QUIZ SCORE: ${totalScore}</h2><button onclick="location.reload()" class="action-btn-large">SAVE & RETURN</button>`;
 }
 
-// OTHER MODES (READ, GAME, BLIND)
+// UTILITIES
 document.getElementById('ctrl-play').onclick = () => audio.play();
 document.getElementById('ctrl-pause').onclick = () => audio.pause();
 document.getElementById('ctrl-stop').onclick = () => { audio.pause(); audio.currentTime = 0; };
 document.getElementById('btn-blind').onclick = () => { transcript.classList.add('hidden'); gameZone.classList.add('hidden'); audio.play(); };
 
 document.getElementById('btn-read').onclick = () => {
-    const fn = audio.src.split('/').pop(); const dataArr = lessonData[fn];
-    if (dataArr) {
-        const data = dataArr[0];
-        transcript.classList.remove('hidden'); gameZone.classList.add('hidden'); transcript.innerHTML = "";
-        data.text.split(" ").forEach(w => {
-            const span = document.createElement('span'); 
-            const clean = w.toLowerCase().replace(/[^a-z0-9ğüşöçı]/gi, "");
-            span.innerText = w + " "; span.className = "clickable-word";
-            span.onclick = (e) => {
-                const tr = data.dict[clean];
-                if(tr) {
-                    if (!wordBucket.some(p => p.en === clean)) wordBucket.push({en: clean, tr: tr});
-                    popup.innerText = tr; popup.style.left = `${e.clientX}px`; popup.style.top = `${e.clientY - 50}px`;
-                    popup.classList.remove('hidden'); setTimeout(() => popup.classList.add('hidden'), 2000);
-                }
-            };
-            transcript.appendChild(span);
-        });
-        audio.play();
-    }
+    const fn = audio.src.split('/').pop(); const data = lessonData[fn][0];
+    transcript.classList.remove('hidden'); gameZone.classList.add('hidden'); transcript.innerHTML = "";
+    data.text.split(" ").forEach(w => {
+        const span = document.createElement('span'); 
+        const clean = w.toLowerCase().replace(/[^a-z0-9ğüşöçı]/gi, "");
+        span.innerText = w + " "; span.className = "clickable-word";
+        span.onclick = (e) => {
+            const tr = data.dict[clean];
+            if(tr) {
+                if (!wordBucket.some(p => p.en === clean)) wordBucket.push({en: clean, tr: tr});
+                popup.innerText = tr; popup.style.left = `${e.clientX}px`; popup.style.top = `${e.clientY - 50}px`;
+                popup.classList.remove('hidden'); setTimeout(() => popup.classList.add('hidden'), 2000);
+            }
+        };
+        transcript.appendChild(span);
+    });
+    audio.play();
 };
 
 document.getElementById('btn-game').onclick = () => {
@@ -180,7 +194,7 @@ document.getElementById('btn-game').onclick = () => {
             if (div.classList.contains('correct') || div.classList.contains('selected')) return;
             if (firstCard) {
                 if (firstCard.innerText === card.match) {
-                    div.classList.add('correct'); firstCard.classList.add('correct'); firstCard = null;
+                    div.classList.add('correct'); div.classList.add('correct'); firstCard = null;
                 } else {
                     div.classList.add('wrong'); setTimeout(() => { div.classList.remove('wrong'); firstCard.classList.remove('selected'); firstCard = null; }, 500);
                 }
